@@ -28,3 +28,30 @@ def calculate_moving_averages(df):
 
 # Расчет скользящих средних
 historical_data = calculate_moving_averages(historical_data)
+
+def generate_signals(df):
+    signals = []
+    for i in range(1, len(df)):
+        # Buy Signal: Short MA crosses above Long MA
+        if df['short_ma'].iloc[i] > df['long_ma'].iloc[i] and df['short_ma'].iloc[i - 1] <= df['long_ma'].iloc[i - 1]:
+            signals.append(('buy', df.index[i]))
+        # Sell Signal: Short MA crosses below Long MA
+        elif df['short_ma'].iloc[i] < df['long_ma'].iloc[i] and df['short_ma'].iloc[i - 1] >= df['long_ma'].iloc[i - 1]:
+            signals.append(('sell', df.index[i]))
+    return signals
+
+# Get trading signals
+signals = generate_signals(historical_data)
+
+def create_order(symbol, type, side, amount, price):
+    order = binance.create_order(
+        symbol=symbol,
+        type=type,
+        side=side,
+        amount=amount,
+        price=price
+    )
+    return order
+
+# Example: Create a limit buy order for 0.01 BTC at a price of $40,000
+# create_order('BTC/USDT', 'limit', 'buy', 0.01, 40000)
