@@ -1,0 +1,21 @@
+# Python:
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtualenv:
+myenv/
+*.swp
+*.swo
+
+# Development tools:
+.idea/
+.vscode/
+*.egg-info/
+
+# System files:
+.DS_Store
+.Thumbs.db
+.env
