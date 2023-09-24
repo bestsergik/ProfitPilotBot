@@ -1,122 +1,73 @@
 import pandas as pd
-from trading_bot import binance as client
+from trading_bot import sign_and_send_request
 
-# Проверка подключения (метод fetch_time не является стандартным методом ccxt, но можно использовать его, если биржа поддерживает)
-# Если Binance не поддерживает fetch_time, вы можете просто пропустить этот шаг
-try:
-    timestamp = client.fetch_time()
-    print(f"Время биржи: {timestamp}")
-except Exception as e:
-    print(f"Не удалось получить время биржи: {e}")
-
-def fetch_historical_data(symbol, timeframe):
-    # Используйте уже импортированный client, а не создавайте новый экземпляр binance
-    ohlcv = client.fetch_ohlcv(symbol, timeframe)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+def fetch_historical_data(symbol, interval):
+    params = {
+        'symbol': symbol,
+        'interval': interval,
+    }
+    response = sign_and_send_request(params)  # отправка запроса на получение исторических данных
+    klines = response.get('klines', [])  # извлечение данных свечей из ответа
+    # конвертация данных в DataFrame и установка временных меток в качестве индекса
+    df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time',
+                                       'quote_asset_volume', 'trades_count', 'taker_buy_base', 'taker_buy_quote',
+                                       'ignored'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-    return df
-
-
-# Получение исторических данных для BTC/USDT с дневным таймфреймом
-historical_data = fetch_historical_data('BTC/USDT', '1D')
+    return df[['open', 'high', 'low', 'close', 'volume']]  # возвращение только выбранных столбцов
 
 def calculate_moving_averages(df):
-    df['short_ma'] = df['close'].rolling(window=20).mean()  # Краткосрочное скользящее среднее
-    df['long_ma'] = df['close'].rolling(window=50).mean()   # Долгосрочное скользящее среднее
-    return df
+    df['short_ma'] = df['close'].rolling(window=20).mean()  # краткосрочное скользящее среднее
+    df['long_ma'] = df['close'].rolling(window=50).mean()   # долгосрочное скользящее среднее
+    return df  # возвращение DataFrame с новыми столбцами
 
-# Расчет скользящих средних
-historical_data = calculate_moving_averages(historical_data)
 
 def generate_signals(df):
-    signals = []
+    signals = []  # список для хранения сигналов
+    # проход по данным и проверка условий для генерации сигналов покупки/продажи
     for i in range(1, len(df)):
-        # Buy Signal: Short MA crosses above Long MA
         if df['short_ma'].iloc[i] > df['long_ma'].iloc[i] and df['short_ma'].iloc[i - 1] <= df['long_ma'].iloc[i - 1]:
             signals.append(('buy', df.index[i]))
-        # Sell Signal: Short MA crosses below Long MA
         elif df['short_ma'].iloc[i] < df['long_ma'].iloc[i] and df['short_ma'].iloc[i - 1] >= df['long_ma'].iloc[i - 1]:
             signals.append(('sell', df.index[i]))
-    return signals
+    return signals  # возвращение списка сигналов
 
-# Get trading signals
-signals = generate_signals(historical_data)
-
-def create_order(symbol, type, side, amount, price):
-    order = binance.create_order(
-        symbol=symbol,
-        type=type,
-        side=side,
-        amount=amount,
-        price=price
-    )
-    return order
-
-# Example: Create a limit buy order for 0.01 BTC at a price of $40,000
-# create_order('BTC/USDT', 'limit', 'buy', 0.01, 40000)
 
 def create_order(symbol, type, side, amount, price, stop_price=None):
-    """
-    Создает ордер на бирже.
-
-    Параметры:
-        symbol (str): Тикер торгуемой пары (например, 'BTC/USDT').
-        type (str): Тип ордера ('LIMIT', 'MARKET', 'STOP_LOSS_LIMIT', и т.д.).
-        side (str): Сторона ордера ('buy' или 'sell').
-        amount (float): Количество актива для покупки/продажи.
-        price (float): Цена, по которой предполагается выполнить ордер.
-        stop_price (float, optional): Цена стоп-лосса. Только для типа 'STOP_LOSS_LIMIT'.
-
-    Возвращает:
-        dict: Информация об ордере.
-    """
-    params = {}
+    params = {
+        'symbol': symbol,
+        'side': side,
+        'type': type,
+        'timeInForce': 'GTC',
+        'quantity': amount,
+        'price': price,
+    }
     if stop_price:
         params['stopPrice'] = stop_price
-
-    order = binance.create_order(
-        symbol=symbol,
-        type=type,
-        side=side,
-        amount=amount,
-        price=price,
-        params=params
-    )
-    return order
+    return sign_and_send_request(params)  # отправка запроса для создания заказа и возвращение ответа
 
 
-# Example: Create a stop-limit sell order
-# create_order('BTC/USDT', 'STOP_LOSS_LIMIT', 'sell', 0.01, 38000, stop_price=39000)
-
-
-# Пример кода для базового бэктестирования
 def backtest(data, capital, strategy):
-    """
-    Производит бэктестирование стратегии на исторических данных.
-
-    Параметры:
-        data (DataFrame): Исторические данные с ценами.
-        capital (float): Начальный капитал.
-        strategy (function): Функция стратегии торговли.
-
-    Возвращает:
-        float: Конечное значение капитала после торговли.
-    """
-    cash = capital
-    position = 0
+    cash = capital  # начальный капитал
+    position = 0  # текущая позиция
     for i in range(len(data)):
-        signal = strategy(data.iloc[:i])
-        price = data['close'].iloc[i]
+        signal = strategy(data.iloc[:i])  # получение сигнала от стратегии
+        price = data['close'].iloc[i]  # текущая цена закрытия
+        # выполнение действий в зависимости от сигнала
         if signal == 'buy' and cash >= price:
             position += cash // price
             cash -= position * price
         elif signal == 'sell' and position > 0:
             cash += position * price
             position = 0
-    final_value = cash + position * (data['close'].iloc[-1] if position > 0 else 0)
-    return final_value
+    final_value = cash + position * (data['close'].iloc[-1] if position > 0 else 0)  # итоговая стоимость портфеля
+    return final_value  # возвращение итоговой стоимости
 
 
-# Бэктестирование вашего бота
-backtest(historical_data, 10000, generate_signals)
+# получение исторических данных, расчет скользящих средних, генерация сигналов и проведение бектеста
+historical_data = fetch_historical_data('BTCUSDT', '1d')
+historical_data = calculate_moving_averages(historical_data)
+signals = generate_signals(historical_data)
+backtest_result = backtest(historical_data, 10000, generate_signals)
+print(f"Результат бектеста: {backtest_result}")
+
